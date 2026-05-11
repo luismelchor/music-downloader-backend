@@ -19,6 +19,13 @@ import time
 
 app = Flask(__name__)
 CORS(app)
+@app.route('/')
+def home():
+    return jsonify({
+        "status": "online",
+        "message": "Music Downloader Backend funcionando",
+        "version": "5.1"
+    })
 
 # Logging
 logging.basicConfig(level=logging.INFO)
