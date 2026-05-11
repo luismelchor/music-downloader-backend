@@ -132,14 +132,30 @@ def download():
         
         # Configuración de yt-dlp
         ydl_opts = {
-            'outtmpl': os.path.join(TEMP_DIR, '%(title)s.%(ext)s'),
-            'quiet': False,
-            'no_warnings': False,
-            'progress_hooks': [progress_hook],
-            'socket_timeout': 30,
-            'default_search': 'ytsearch',
-            'extract_flat': False,
+    'outtmpl': os.path.join(TEMP_DIR, '%(title)s.%(ext)s'),
+    'quiet': False,
+    'no_warnings': False,
+    'progress_hooks': [progress_hook],
+
+    # Anti-bloqueos YouTube
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['android', 'web']
         }
+    },
+
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    },
+
+    'socket_timeout': 30,
+    'retries': 10,
+    'fragment_retries': 10,
+
+    'nocheckcertificate': True,
+    'ignoreerrors': False,
+    'geo_bypass': True,
+}
         
         if format_type == 'mp3':
             ydl_opts.update({
