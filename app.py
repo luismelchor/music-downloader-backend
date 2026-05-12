@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Backend Flask para Music Downloader Pro
-VERSIÓN 5.3 - Optimizado para Render con soporte completo de YouTube
+VERSIÓN 5.4 - SOLUCIÓN FINAL PARA RENDER (Sin depender de Chrome/Firefox)
 """
 
 from flask import Flask, request, jsonify
@@ -91,7 +91,7 @@ def home():
     return jsonify({
         "status": "online",
         "message": "Music Downloader Backend funcionando",
-        "version": "5.3"
+        "version": "5.4"
     })
 
 
@@ -105,7 +105,7 @@ def health():
     
     return jsonify({
         "status": "ok",
-        "version": "5.3",
+        "version": "5.4",
         "mode": "cloud",
         "download_dir": DOWNLOAD_DIR,
         "temp_dir": TEMP_DIR,
@@ -138,7 +138,8 @@ def download():
             "title": "Analizando video..."
         }
 
-        # Configuración de yt-dlp (optimizada para YouTube con cookies)
+        # SOLUCIÓN v5.4: Sin dependencias de navegador
+        # Usando directamente extractor de yt-dlp con User-Agent actualizado
         ydl_opts = {
             # Salida y progreso
             'outtmpl': os.path.join(TEMP_DIR, '%(title)s.%(ext)s'),
@@ -146,10 +147,10 @@ def download():
             'quiet': False,
             'no_warnings': False,
             
-            # Manejo de cookies y autenticación
-            'cookiesfrombrowser': ['chrome'],  # ← SOLUCIÓN PRINCIPAL
+            # User-Agent para simular navegador (SIN depender de Chrome/Firefox)
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept-Language': 'es-ES,es;q=0.9',
             },
             
             # Configuración de red
@@ -157,6 +158,7 @@ def download():
             'retries': 10,
             'fragment_retries': 10,
             'skip_unavailable_fragments': True,
+            'concurrent_fragment_downloads': 4,
             
             # Configuración de seguridad y bypass
             'nocheckcertificate': True,
@@ -167,6 +169,14 @@ def download():
             'noplaylist': True,
             'default_search': 'ytsearch',
             'extract_flat': False,
+            
+            # IMPORTANTE: Extractor específico de YouTube sin cookies
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['dash', 'hls'],
+                    'lang': ['es'],
+                }
+            },
         }
 
         # Configuración por formato
@@ -346,8 +356,9 @@ def list_files():
 
 if __name__ == '__main__':
     print("╔════════════════════════════════════════════════════════════╗")
-    print("║  🎧 Music Downloader Backend v5.3 - CLOUD                  ║")
-    print("║  ✅ Soporte completo YouTube con cookies                   ║")
+    print("║  🎧 Music Downloader Backend v5.4 - CLOUD                  ║")
+    print("║  ✅ SIN DEPENDENCIAS DE NAVEGADOR (Chrome/Firefox)         ║")
+    print("║  ✅ Optimizado para Render Linux                           ║")
     print("╚════════════════════════════════════════════════════════════╝")
     print()
 
