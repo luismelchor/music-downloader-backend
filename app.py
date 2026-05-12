@@ -160,19 +160,19 @@ def download():
         # MP3
         if format_type == 'mp3':
             ydl_opts.update({
-                'format': 'bestaudio/best',
+                'format': '140/m4a/bestaudio',
                 'noplaylist': True,
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
-                    'preferredquality': audio_quality,
+                    'preferredquality': '192',
                 }]
             })
 
         # MP4
         else:
             ydl_opts.update({
-                'format': 'best',
+                'format': '18/mp4/best',
                 'noplaylist': True
             })
         # Descargar
