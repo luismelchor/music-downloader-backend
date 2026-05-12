@@ -158,24 +158,23 @@ def download():
         }
 
         # MP3
-if format_type == 'mp3':
-    ydl_opts.update({
-        'format': 'bestaudio[ext=m4a]/bestaudio/best',
-        'noplaylist': True,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': audio_quality,
-        }]
-    })
+        if format_type == 'mp3':
+            ydl_opts.update({
+                'format': 'bestaudio[ext=m4a]/bestaudio/best',
+                'noplaylist': True,
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': audio_quality,
+                }]
+            })
 
-# MP4
-else:
-    ydl_opts.update({
-        'format': 'best[ext=mp4]/best',
-        'noplaylist': True
-    })
-
+        # MP4
+        else:
+            ydl_opts.update({
+                'format': 'best[ext=mp4]/best',
+                'noplaylist': True
+            })
         # Descargar
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
