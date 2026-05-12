@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Backend Flask para Music Downloader Pro
-Usa yt-dlp para descargas (versión Replit)
-VERSIÓN 5.1 - Optimizado para despliegue en Replit/Railway/Render
+VERSIÓN 5.3 - Optimizado para Render con soporte completo de YouTube
 """
 
 from flask import Flask, request, jsonify
@@ -14,25 +13,15 @@ from pathlib import Path
 from datetime import datetime
 import logging
 import shutil
-import subprocess
-import time
 
 app = Flask(__name__)
 CORS(app)
-
-@app.route('/')
-def home():
-    return jsonify({
-        "status": "online",
-        "message": "Music Downloader Backend funcionando",
-        "version": "5.1"
-    })
 
 # Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configuración de directorios para servidor en nube
+# Configuración de directorios
 BASE_DIR = os.path.join(os.path.expanduser("~"), ".music_downloader")
 DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
 TEMP_DIR = os.path.join(BASE_DIR, "temp")
@@ -46,7 +35,6 @@ try:
 except Exception as e:
     logger.error(f"❌ Error creando carpetas: {e}")
 
-# Para guardar metadatos de descargas
 METADATA_FILE = os.path.join(BASE_DIR, "downloads_metadata.json")
 
 # Estado global
@@ -55,7 +43,7 @@ downloads_history = []
 
 
 def load_downloads_history():
-    """Cargar historial de descargas de archivo JSON"""
+    """Cargar historial de descargas"""
     global downloads_history
     try:
         if os.path.exists(METADATA_FILE):
@@ -86,11 +74,10 @@ def progress_hook(d):
                 "percentage": round(percentage, 1),
                 "title": d.get('_filename', 'Descargando...')
             }
-
-        logger.info(f"Progreso: {download_progress}")
+            logger.info(f"Progreso: {download_progress['percentage']}%")
 
     elif d['status'] == 'finished':
-        logger.info("Descarga completada")
+        logger.info("Descarga completada, procesando...")
         download_progress = {
             "status": "processing",
             "percentage": 95,
@@ -98,16 +85,31 @@ def progress_hook(d):
         }
 
 
+@app.route('/')
+def home():
+    """Ruta principal"""
+    return jsonify({
+        "status": "online",
+        "message": "Music Downloader Backend funcionando",
+        "version": "5.3"
+    })
+
+
 @app.route('/health', methods=['GET'])
 def health():
     """Verificar que el servidor está funcionando"""
+    try:
+        space_mb = os.statvfs(TEMP_DIR).f_bavail * os.statvfs(TEMP_DIR).f_frsize // (1024 * 1024)
+    except:
+        space_mb = 0
+    
     return jsonify({
         "status": "ok",
-        "version": "5.1",
+        "version": "5.3",
         "mode": "cloud",
         "download_dir": DOWNLOAD_DIR,
         "temp_dir": TEMP_DIR,
-        "space_available_mb": os.statvfs(TEMP_DIR).f_bavail * os.statvfs(TEMP_DIR).f_frsize // (1024 * 1024)
+        "space_available_mb": space_mb
     })
 
 
@@ -118,7 +120,6 @@ def download():
 
     try:
         data = request.get_json()
-
         url = data.get('url', '').strip()
         format_type = data.get('format', 'mp3').lower()
         audio_quality = data.get('audio_quality', '192')
@@ -130,57 +131,68 @@ def download():
         if format_type not in ['mp3', 'mp4']:
             return jsonify({"error": "Formato inválido. Usa: mp3 o mp4"}), 400
 
-        logger.info(f"Descargando: {url}")
-
+        logger.info(f"🎵 Descargando: {url}")
         download_progress = {
             "status": "starting",
             "percentage": 5,
             "title": "Analizando video..."
         }
 
-        # Configuración yt-dlp
+        # Configuración de yt-dlp (optimizada para YouTube con cookies)
         ydl_opts = {
+            # Salida y progreso
             'outtmpl': os.path.join(TEMP_DIR, '%(title)s.%(ext)s'),
-            'cookiefile': os.path.join(os.getcwd(), 'cookies.txt'),
+            'progress_hooks': [progress_hook],
             'quiet': False,
             'no_warnings': False,
-            'progress_hooks': [progress_hook],
+            
+            # Manejo de cookies y autenticación
+            'cookiesfrombrowser': ['chrome'],  # ← SOLUCIÓN PRINCIPAL
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             },
+            
+            # Configuración de red
             'socket_timeout': 30,
             'retries': 10,
             'fragment_retries': 10,
+            'skip_unavailable_fragments': True,
+            
+            # Configuración de seguridad y bypass
             'nocheckcertificate': True,
-            'ignoreerrors': False,
             'geo_bypass': True,
+            'ignoreerrors': False,
+            
+            # Configuración de extracción
             'noplaylist': True,
+            'default_search': 'ytsearch',
+            'extract_flat': False,
         }
 
-        # MP3
+        # Configuración por formato
         if format_type == 'mp3':
             ydl_opts.update({
-                'format': '140/m4a/bestaudio',
-                'noplaylist': True,
+                'format': 'bestaudio[ext=m4a]/bestaudio/best',
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
-                    'preferredquality': '192',
+                    'preferredquality': audio_quality,
+                }]
+            })
+        else:
+            ydl_opts.update({
+                'format': 'bestvideo+bestaudio/best',
+                'postprocessors': [{
+                    'key': 'FFmpegVideoConvertor',
+                    'preferedformat': 'mp4'
                 }]
             })
 
-        # MP4
-        else:
-            ydl_opts.update({
-                'format': '18/mp4/best',
-                'noplaylist': True
-            })
         # Descargar
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
 
             title = info.get('title', 'Sin título')
-
             clean_title = "".join(
                 c for c in title
                 if c.isalnum() or c in (' ', '-', '_')
@@ -192,10 +204,8 @@ def download():
 
             # Buscar archivo descargado
             downloaded_file = None
-
             for ext in [format_type, 'mp3', 'mp4', 'm4a', 'webm', 'wav']:
                 potential_path = os.path.join(TEMP_DIR, f"{title}.{ext}")
-
                 if os.path.exists(potential_path):
                     downloaded_file = potential_path
                     break
@@ -207,15 +217,13 @@ def download():
                         key=os.path.getctime,
                         reverse=True
                     )
-
                     if files:
                         downloaded_file = files[0]
-
                 except:
                     pass
 
             if not downloaded_file or not os.path.exists(downloaded_file):
-                logger.error("Archivo no encontrado")
+                logger.error("Archivo no encontrado después de descarga")
                 return jsonify({
                     "error": "Archivo no encontrado después de descarga"
                 }), 500
@@ -228,9 +236,11 @@ def download():
             file_size = os.path.getsize(downloaded_file)
 
             if file_size == 0:
-                logger.error("Archivo vacío")
-                os.remove(downloaded_file)
-
+                logger.error("Archivo vacío después de descarga")
+                try:
+                    os.remove(downloaded_file)
+                except:
+                    pass
                 return jsonify({
                     "error": "El archivo está vacío"
                 }), 500
@@ -246,16 +256,14 @@ def download():
 
             try:
                 shutil.move(downloaded_file, final_path)
-                logger.info(f"✅ Archivo movido a: {final_path}")
-
+                logger.info(f"✅ Archivo guardado: {final_path}")
             except Exception as e:
-                logger.error(f"Error moviendo archivo: {e}")
-
+                logger.error(f"Error guardando archivo: {e}")
                 return jsonify({
                     "error": f"Error al guardar: {str(e)}"
                 }), 500
 
-            # Historial
+            # Guardar en historial
             download_record = {
                 "title": title,
                 "filename": final_filename,
@@ -291,14 +299,12 @@ def download():
             })
 
     except Exception as e:
-        logger.error(f"❌ Error: {str(e)}", exc_info=True)
-
+        logger.error(f"❌ Error en descarga: {str(e)}", exc_info=True)
         download_progress = {
             "status": "error",
             "percentage": 0,
-            "title": str(e)
+            "title": f"Error: {str(e)}"
         }
-
         return jsonify({
             "error": f"Error: {str(e)}"
         }), 500
@@ -306,7 +312,7 @@ def download():
 
 @app.route('/progress', methods=['GET'])
 def get_progress():
-    """Obtener progreso actual"""
+    """Obtener progreso actual de descarga"""
     return jsonify(download_progress)
 
 
@@ -320,34 +326,28 @@ def get_history():
 @app.route('/files', methods=['GET'])
 def list_files():
     """Listar archivos descargados"""
-
     try:
         files = []
-
         if os.path.exists(DOWNLOAD_DIR):
-
             for f in os.listdir(DOWNLOAD_DIR):
                 filepath = os.path.join(DOWNLOAD_DIR, f)
-
                 if os.path.isfile(filepath):
                     size = os.path.getsize(filepath)
-
                     files.append({
                         "filename": f,
                         "path": filepath,
                         "size_mb": round(size / (1024 ** 2), 2)
                     })
-
         return jsonify({"files": files})
-
     except Exception as e:
+        logger.error(f"Error listando archivos: {e}")
         return jsonify({"error": str(e)}), 500
 
 
 if __name__ == '__main__':
-
     print("╔════════════════════════════════════════════════════════════╗")
-    print("║  🎧 Music Downloader Backend v5.1 - CLOUD                ║")
+    print("║  🎧 Music Downloader Backend v5.3 - CLOUD                  ║")
+    print("║  ✅ Soporte completo YouTube con cookies                   ║")
     print("╚════════════════════════════════════════════════════════════╝")
     print()
 
@@ -356,18 +356,11 @@ if __name__ == '__main__':
     print(f"📂 Carpeta de descargas: {DOWNLOAD_DIR}")
     print(f"📂 Carpeta temporal: {TEMP_DIR}")
     print()
-
     print("🔗 Servidor en: http://0.0.0.0:5000")
     print()
-
     print("═" * 62)
     print()
 
-    # Puerto dinámico Render/Railway/Replit
+    # Puerto dinámico (para Render/Railway/Replit)
     port = int(os.environ.get('PORT', 5000))
-
-    app.run(
-        host='0.0.0.0',
-        port=port,
-        debug=False
-    )
+    app.run(host='0.0.0.0', port=port, debug=False)
