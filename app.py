@@ -141,7 +141,7 @@ def download():
         # Configuración yt-dlp
         ydl_opts = {
             'outtmpl': os.path.join(TEMP_DIR, '%(title)s.%(ext)s'),
-            'cookiefile': 'cookies.txt',
+            'cookiefile': os.path.join(os.getcwd(), 'cookies.txt'),
             'quiet': False,
             'no_warnings': False,
             'progress_hooks': [progress_hook],
