@@ -1,5 +1,5 @@
 Flask
 flask-cors
 gunicorn
-yt-dlp-nightly>=2024.01.01
+yt-dlp-nightly
 ffmpeg-python
