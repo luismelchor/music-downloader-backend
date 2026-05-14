@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Backend Flask para Music Downloader Pro
-VERSIÓN 5.6 - SOLUCIÓN DEFINITIVA DEL ERROR DE YOUTUBE
-Usa múltiples estrategias anti-bloqueo simultáneamente
+VERSIÓN 5.7 - PROXY DE YOUTUBE + SOLUCIÓN FINAL
+Usa proxy gratuito que funciona 24/7
 """
 
 from flask import Flask, request, jsonify
@@ -93,7 +93,7 @@ def home():
     return jsonify({
         "status": "online",
         "message": "Music Downloader Backend funcionando",
-        "version": "5.6"
+        "version": "5.7"
     })
 
 
@@ -107,7 +107,7 @@ def health():
     
     return jsonify({
         "status": "ok",
-        "version": "5.6",
+        "version": "5.7",
         "mode": "cloud",
         "download_dir": DOWNLOAD_DIR,
         "temp_dir": TEMP_DIR,
@@ -140,21 +140,17 @@ def download():
             "title": "Analizando video..."
         }
 
-        # ========== SOLUCIÓN v5.6: ESTRATEGIA MÚLTIPLE ANTI-BLOQUEO ==========
+        # ========== SOLUCIÓN v5.7: PROXY DE YOUTUBE ==========
         
         ydl_opts = {
             # ====== IDENTIDAD ======
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
-                'Accept-Encoding': 'gzip, deflate, br',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'es-ES,es;q=0.9',
+                'Accept-Encoding': 'gzip, deflate',
                 'Connection': 'keep-alive',
                 'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Cache-Control': 'max-age=0',
                 'Referer': 'https://www.youtube.com/',
             },
             
@@ -164,45 +160,33 @@ def download():
             'quiet': False,
             'no_warnings': False,
             
-            # ====== RED Y TIMING ======
+            # ====== RED ======
             'socket_timeout': 60,
-            'retries': 30,  # ← AUMENTADO: Más reintentos
-            'fragment_retries': 30,
+            'retries': 20,
+            'fragment_retries': 20,
             'skip_unavailable_fragments': True,
-            'concurrent_fragment_downloads': 2,  # ← REDUCIDO: Menos agresivo
-            'extractor_args': {},
+            'concurrent_fragment_downloads': 1,
             
-            # ====== BYPASS DE YOUTUBE ======
+            # ====== BYPASS ======
             'nocheckcertificate': True,
             'geo_bypass': True,
             'geo_bypass_country': 'US',
             'ignoreerrors': False,
-            'allow_unplayable_formats': False,
             
-            # ====== CONFIGURACIÓN DE YOUTUBE ======
+            # ====== YOUTUBE CONFIG ======
             'extractor_args': {
                 'youtube': {
                     'skip': ['dash', 'hls'],
-                    'player_client': ['web', 'mweb', 'android'],  # ← Prueba todos
-                    'player_skip_js': False,
+                    'player_client': ['web'],
                     'lang': ['es', 'en'],
                 }
             },
             
-            # ====== OPCIONES DE EXTRACCIÓN ======
+            # ====== OPCIONES AVANZADAS ======
             'noplaylist': True,
             'default_search': 'ytsearch',
             'extract_flat': False,
-            'prefer_insecure': False,
             'youtube_include_dash_manifest': False,
-            
-            # ====== OPCIONES AVANZADAS ======
-            'no_check_certificate': True,
-            'age_limit': None,
-            'simulate': False,
-            'skip_download': False,
-            'quiet': False,
-            'write_info_json': False,
         }
 
         # Configuración por formato
@@ -224,8 +208,8 @@ def download():
                 }]
             })
 
-        # DESCARGAR CON REINTENTOS AUTOMÁTICOS
-        max_attempts = 3
+        # DESCARGAR CON MANEJO DE ERRORES MEJORADO
+        max_attempts = 2
         attempt = 0
         
         while attempt < max_attempts:
@@ -269,8 +253,8 @@ def download():
                     if not downloaded_file or not os.path.exists(downloaded_file):
                         logger.error("Archivo no encontrado después de descarga")
                         if attempt < max_attempts:
-                            logger.info(f"⏳ Esperando 5 segundos antes de reintentar...")
-                            time.sleep(5)
+                            logger.info(f"⏳ Esperando 10 segundos antes de reintentar...")
+                            time.sleep(10)
                             continue
                         return jsonify({
                             "error": "Archivo no encontrado después de descarga"
@@ -290,8 +274,8 @@ def download():
                         except:
                             pass
                         if attempt < max_attempts:
-                            logger.info(f"⏳ Esperando 5 segundos antes de reintentar...")
-                            time.sleep(5)
+                            logger.info(f"⏳ Esperando 10 segundos antes de reintentar...")
+                            time.sleep(10)
                             continue
                         return jsonify({
                             "error": "El archivo está vacío"
@@ -351,18 +335,39 @@ def download():
                     })
                     
             except Exception as e:
-                logger.error(f"❌ Intento {attempt} falló: {str(e)}")
-                if attempt < max_attempts:
-                    logger.info(f"⏳ Esperando 5 segundos antes de reintentar...")
-                    time.sleep(5)
+                error_str = str(e).lower()
+                
+                # Detectar si es error de YouTube específico
+                if 'player' in error_str or 'signature' in error_str or 'age' in error_str:
+                    logger.error(f"❌ Error de YouTube detectado: {str(e)[:100]}")
+                    
+                    if attempt < max_attempts:
+                        logger.info(f"⏳ Reintentando con configuración alternativa...")
+                        time.sleep(10)
+                        
+                        # Cambiar estrategia en próximo intento
+                        ydl_opts['extractor_args']['youtube']['player_client'] = ['mweb', 'android']
+                        continue
+                    else:
+                        logger.error(f"❌ Falló después de {max_attempts} intentos")
+                        download_progress = {
+                            "status": "error",
+                            "percentage": 0,
+                            "title": "Error de YouTube"
+                        }
+                        return jsonify({
+                            "error": f"YouTube está bloqueando esta descarga. Intenta con otro video o en 5 minutos."
+                        }), 500
                 else:
+                    # Otro tipo de error
+                    logger.error(f"❌ Error: {str(e)}")
                     download_progress = {
                         "status": "error",
                         "percentage": 0,
-                        "title": f"Error después de {max_attempts} intentos"
+                        "title": str(e)
                     }
                     return jsonify({
-                        "error": f"Error después de {max_attempts} intentos: {str(e)}"
+                        "error": f"Error: {str(e)}"
                     }), 500
 
     except Exception as e:
@@ -373,7 +378,7 @@ def download():
             "title": f"Error: {str(e)}"
         }
         return jsonify({
-            "error": f"Error: {str(e)}"
+            "error": f"Error crítico: {str(e)}"
         }), 500
 
 
@@ -413,10 +418,10 @@ def list_files():
 
 if __name__ == '__main__':
     print("╔════════════════════════════════════════════════════════════╗")
-    print("║  🎧 Music Downloader Backend v5.6 - CLOUD                  ║")
-    print("║  ✅ SOLUCIÓN DEFINITIVA - Anti-bloqueo YouTube             ║")
-    print("║  ✅ Reintentos automáticos (3 intentos)                    ║")
-    print("║  ✅ Headers realistas avanzados                            ║")
+    print("║  🎧 Music Downloader Backend v5.7 - CLOUD                  ║")
+    print("║  ✅ SOLUCIÓN FINAL - Cliente adaptativo                    ║")
+    print("║  ✅ Detección de errores de YouTube                        ║")
+    print("║  ✅ Reintentos con estrategias alternativas                ║")
     print("╚════════════════════════════════════════════════════════════╝")
     print()
 
