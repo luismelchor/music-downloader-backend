@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Backend Flask para Music Downloader Pro
-VERSIÓN 5.4 - SOLUCIÓN FINAL PARA RENDER (Sin depender de Chrome/Firefox)
+VERSIÓN 5.5 - SOLUCIÓN DEFINITIVA PARA BLOQUEO DE YOUTUBE
+Bypass de autenticación + Cliente Android + Geo-bypass
 """
 
 from flask import Flask, request, jsonify
@@ -91,7 +92,7 @@ def home():
     return jsonify({
         "status": "online",
         "message": "Music Downloader Backend funcionando",
-        "version": "5.4"
+        "version": "5.5"
     })
 
 
@@ -105,7 +106,7 @@ def health():
     
     return jsonify({
         "status": "ok",
-        "version": "5.4",
+        "version": "5.5",
         "mode": "cloud",
         "download_dir": DOWNLOAD_DIR,
         "temp_dir": TEMP_DIR,
@@ -138,8 +139,7 @@ def download():
             "title": "Analizando video..."
         }
 
-        # SOLUCIÓN v5.4: Sin dependencias de navegador
-        # Usando directamente extractor de yt-dlp con User-Agent actualizado
+        # SOLUCIÓN v5.5: Configuración DEFINITIVA para YouTube
         ydl_opts = {
             # Salida y progreso
             'outtmpl': os.path.join(TEMP_DIR, '%(title)s.%(ext)s'),
@@ -147,42 +147,48 @@ def download():
             'quiet': False,
             'no_warnings': False,
             
-            # User-Agent para simular navegador (SIN depender de Chrome/Firefox)
+            # Headers HTTP realistas
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept-Language': 'es-ES,es;q=0.9',
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+                'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
+                'Referer': 'https://www.youtube.com/',
             },
             
             # Configuración de red
             'socket_timeout': 30,
-            'retries': 10,
-            'fragment_retries': 10,
+            'retries': 15,
+            'fragment_retries': 15,
             'skip_unavailable_fragments': True,
             'concurrent_fragment_downloads': 4,
             
-            # Configuración de seguridad y bypass
+            # BYPASS DE YOUTUBE (Lo más importante)
             'nocheckcertificate': True,
             'geo_bypass': True,
+            'geo_bypass_country': 'US',
             'ignoreerrors': False,
+            
+            # Extractor args para YouTube
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['dash', 'hls'],
+                    'player_client': ['web', 'android', 'mweb'],
+                    'lang': ['es', 'en'],
+                }
+            },
             
             # Configuración de extracción
             'noplaylist': True,
             'default_search': 'ytsearch',
             'extract_flat': False,
-            
-            # IMPORTANTE: Extractor específico de YouTube sin cookies
-            'extractor_args': {
-                'youtube': {
-                    'skip': ['dash', 'hls'],
-                    'lang': ['es'],
-                }
-            },
+            'prefer_insecure': False,
         }
 
         # Configuración por formato
         if format_type == 'mp3':
             ydl_opts.update({
-                'format': 'bestaudio[ext=m4a]/bestaudio/best',
+                'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
@@ -356,9 +362,9 @@ def list_files():
 
 if __name__ == '__main__':
     print("╔════════════════════════════════════════════════════════════╗")
-    print("║  🎧 Music Downloader Backend v5.4 - CLOUD                  ║")
-    print("║  ✅ SIN DEPENDENCIAS DE NAVEGADOR (Chrome/Firefox)         ║")
-    print("║  ✅ Optimizado para Render Linux                           ║")
+    print("║  🎧 Music Downloader Backend v5.5 - CLOUD                  ║")
+    print("║  ✅ SOLUCIÓN DEFINITIVA - YouTube Auth Bypass              ║")
+    print("║  ✅ Cliente: Web + Android + Mobile                        ║")
     print("╚════════════════════════════════════════════════════════════╝")
     print()
 
