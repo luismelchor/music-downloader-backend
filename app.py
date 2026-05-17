@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Backend Flask para Music Downloader Pro
-VERSIÓN 5.7 - PROXY DE YOUTUBE + SOLUCIÓN FINAL
-Usa proxy gratuito que funciona 24/7
+VERSIÓN 5.8 - SOLUCIÓN FINAL CON INVIDIOUS
+Usa YouTube normalmente, pero si falla → Usa Invidious
 """
 
 from flask import Flask, request, jsonify
@@ -42,6 +42,15 @@ METADATA_FILE = os.path.join(BASE_DIR, "downloads_metadata.json")
 # Estado global
 download_progress = {"status": "idle", "percentage": 0, "title": ""}
 downloads_history = []
+
+# Servidores Invidious gratuitos (fallback)
+INVIDIOUS_SERVERS = [
+    "https://invidious.jing.rocks",
+    "https://invidious.nerdvpn.de",
+    "https://invidious.silkky.cloud",
+    "https://inv.riverside.rocks",
+    "https://yt.artemislena.eu",
+]
 
 
 def load_downloads_history():
@@ -87,13 +96,30 @@ def progress_hook(d):
         }
 
 
+def extract_video_id(url):
+    """Extraer video ID de URL de YouTube"""
+    try:
+        if 'youtube.com' in url:
+            return url.split('v=')[1].split('&')[0]
+        elif 'youtu.be' in url:
+            return url.split('youtu.be/')[1].split('?')[0]
+    except:
+        return None
+    return None
+
+
+def get_invidious_url(video_id, server):
+    """Construir URL de Invidious"""
+    return f"{server}/watch?v={video_id}"
+
+
 @app.route('/')
 def home():
     """Ruta principal"""
     return jsonify({
         "status": "online",
         "message": "Music Downloader Backend funcionando",
-        "version": "5.7"
+        "version": "5.8"
     })
 
 
@@ -107,7 +133,7 @@ def health():
     
     return jsonify({
         "status": "ok",
-        "version": "5.7",
+        "version": "5.8",
         "mode": "cloud",
         "download_dir": DOWNLOAD_DIR,
         "temp_dir": TEMP_DIR,
@@ -115,9 +141,122 @@ def health():
     })
 
 
+def try_download_with_config(url, ydl_opts, format_type):
+    """Intentar descargar con configuración específica. Retorna respuesta JSON o None."""
+    global download_progress
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+
+            title = info.get('title', 'Sin título')
+            clean_title = "".join(
+                c for c in title
+                if c.isalnum() or c in (' ', '-', '_')
+            ).strip()
+
+            thumbnail = info.get('thumbnail', '')
+            duration = info.get('duration', 0)
+            uploader = info.get('uploader', 'Desconocido')
+
+            # Buscar archivo descargado
+            downloaded_file = None
+            for ext in [format_type, 'mp3', 'mp4', 'm4a', 'webm', 'wav']:
+                potential_path = os.path.join(TEMP_DIR, f"{title}.{ext}")
+                if os.path.exists(potential_path):
+                    downloaded_file = potential_path
+                    break
+
+            if not downloaded_file:
+                try:
+                    files = sorted(
+                        [os.path.join(TEMP_DIR, f) for f in os.listdir(TEMP_DIR)],
+                        key=os.path.getctime,
+                        reverse=True
+                    )
+                    if files:
+                        downloaded_file = files[0]
+                except:
+                    pass
+
+            if not downloaded_file or not os.path.exists(downloaded_file):
+                logger.error("Archivo no encontrado después de descarga")
+                return None
+
+            # Nombre final
+            final_filename = f"{clean_title}.{format_type}"
+            final_path = os.path.join(DOWNLOAD_DIR, final_filename)
+
+            # Verificar tamaño
+            file_size = os.path.getsize(downloaded_file)
+
+            if file_size == 0:
+                logger.error("Archivo vacío después de descarga")
+                try:
+                    os.remove(downloaded_file)
+                except:
+                    pass
+                return None
+
+            logger.info(f"✅ Archivo descargado: {file_size / (1024 * 1024):.2f} MB")
+
+            # Guardar archivo
+            download_progress = {
+                "status": "saving",
+                "percentage": 90,
+                "title": "Guardando archivo..."
+            }
+
+            try:
+                shutil.move(downloaded_file, final_path)
+                logger.info(f"✅ Archivo guardado: {final_path}")
+            except Exception as e:
+                logger.error(f"Error guardando archivo: {e}")
+                return None
+
+            # Guardar en historial
+            download_record = {
+                "title": title,
+                "filename": final_filename,
+                "path": final_path,
+                "size_mb": round(file_size / (1024 ** 2), 2),
+                "duration": duration,
+                "uploader": uploader,
+                "format": format_type,
+                "thumbnail": thumbnail,
+                "downloaded_at": datetime.now().isoformat()
+            }
+
+            downloads_history.append(download_record)
+            save_downloads_history()
+
+            download_progress = {
+                "status": "completed",
+                "percentage": 100,
+                "title": title
+            }
+
+            return jsonify({
+                "success": True,
+                "title": title,
+                "thumbnail": thumbnail,
+                "duration": duration,
+                "uploader": uploader,
+                "format": format_type,
+                "file_size_mb": round(file_size / (1024 ** 2), 2),
+                "filename": final_filename,
+                "local_path": final_path,
+                "timestamp": datetime.now().isoformat()
+            })
+
+    except Exception as e:
+        logger.warning(f"❌ Descarga fallida: {str(e)[:50]}")
+        return None
+
+
 @app.route('/download', methods=['POST'])
 def download():
-    """Descargar audio de YouTube"""
+    """Descargar audio de YouTube con fallback a Invidious"""
     global download_progress
 
     try:
@@ -140,17 +279,15 @@ def download():
             "title": "Analizando video..."
         }
 
-        # ========== SOLUCIÓN v5.7: PROXY DE YOUTUBE ==========
-        
-        ydl_opts = {
+        # Configuración base para yt-dlp
+        base_ydl_opts = {
             # ====== IDENTIDAD ======
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
                 'Accept-Language': 'es-ES,es;q=0.9',
                 'Accept-Encoding': 'gzip, deflate',
                 'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
                 'Referer': 'https://www.youtube.com/',
             },
             
@@ -162,8 +299,8 @@ def download():
             
             # ====== RED ======
             'socket_timeout': 60,
-            'retries': 20,
-            'fragment_retries': 20,
+            'retries': 15,
+            'fragment_retries': 15,
             'skip_unavailable_fragments': True,
             'concurrent_fragment_downloads': 1,
             
@@ -182,7 +319,7 @@ def download():
                 }
             },
             
-            # ====== OPCIONES AVANZADAS ======
+            # ====== OPCIONES ======
             'noplaylist': True,
             'default_search': 'ytsearch',
             'extract_flat': False,
@@ -191,7 +328,7 @@ def download():
 
         # Configuración por formato
         if format_type == 'mp3':
-            ydl_opts.update({
+            base_ydl_opts.update({
                 'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
@@ -200,7 +337,7 @@ def download():
                 }]
             })
         else:
-            ydl_opts.update({
+            base_ydl_opts.update({
                 'format': 'bestvideo+bestaudio/best',
                 'postprocessors': [{
                     'key': 'FFmpegVideoConvertor',
@@ -208,167 +345,51 @@ def download():
                 }]
             })
 
-        # DESCARGAR CON MANEJO DE ERRORES MEJORADO
-        max_attempts = 2
-        attempt = 0
+        # INTENTAR YOUTUBE PRIMERO
+        logger.info("🔄 Intentando con YouTube directo...")
+        result = try_download_with_config(url, base_ydl_opts, format_type)
         
-        while attempt < max_attempts:
-            attempt += 1
-            logger.info(f"🔄 Intento {attempt}/{max_attempts}")
-            
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
+        if result:
+            return result
 
-                    title = info.get('title', 'Sin título')
-                    clean_title = "".join(
-                        c for c in title
-                        if c.isalnum() or c in (' ', '-', '_')
-                    ).strip()
+        # SI YOUTUBE FALLA → INTENTAR CON INVIDIOUS
+        logger.warning("⚠️ YouTube bloqueó. Intentando con Invidious...")
+        download_progress = {
+            "status": "retrying",
+            "percentage": 30,
+            "title": "YouTube bloqueado. Usando Invidious..."
+        }
 
-                    thumbnail = info.get('thumbnail', '')
-                    duration = info.get('duration', 0)
-                    uploader = info.get('uploader', 'Desconocido')
-
-                    # Buscar archivo descargado
-                    downloaded_file = None
-                    for ext in [format_type, 'mp3', 'mp4', 'm4a', 'webm', 'wav']:
-                        potential_path = os.path.join(TEMP_DIR, f"{title}.{ext}")
-                        if os.path.exists(potential_path):
-                            downloaded_file = potential_path
-                            break
-
-                    if not downloaded_file:
-                        try:
-                            files = sorted(
-                                [os.path.join(TEMP_DIR, f) for f in os.listdir(TEMP_DIR)],
-                                key=os.path.getctime,
-                                reverse=True
-                            )
-                            if files:
-                                downloaded_file = files[0]
-                        except:
-                            pass
-
-                    if not downloaded_file or not os.path.exists(downloaded_file):
-                        logger.error("Archivo no encontrado después de descarga")
-                        if attempt < max_attempts:
-                            logger.info(f"⏳ Esperando 10 segundos antes de reintentar...")
-                            time.sleep(10)
-                            continue
-                        return jsonify({
-                            "error": "Archivo no encontrado después de descarga"
-                        }), 500
-
-                    # Nombre final
-                    final_filename = f"{clean_title}.{format_type}"
-                    final_path = os.path.join(DOWNLOAD_DIR, final_filename)
-
-                    # Verificar tamaño
-                    file_size = os.path.getsize(downloaded_file)
-
-                    if file_size == 0:
-                        logger.error("Archivo vacío después de descarga")
-                        try:
-                            os.remove(downloaded_file)
-                        except:
-                            pass
-                        if attempt < max_attempts:
-                            logger.info(f"⏳ Esperando 10 segundos antes de reintentar...")
-                            time.sleep(10)
-                            continue
-                        return jsonify({
-                            "error": "El archivo está vacío"
-                        }), 500
-
-                    logger.info(f"✅ Archivo descargado: {file_size / (1024 * 1024):.2f} MB")
-
-                    # Guardar archivo
-                    download_progress = {
-                        "status": "saving",
-                        "percentage": 90,
-                        "title": "Guardando archivo..."
-                    }
-
-                    try:
-                        shutil.move(downloaded_file, final_path)
-                        logger.info(f"✅ Archivo guardado: {final_path}")
-                    except Exception as e:
-                        logger.error(f"Error guardando archivo: {e}")
-                        return jsonify({
-                            "error": f"Error al guardar: {str(e)}"
-                        }), 500
-
-                    # Guardar en historial
-                    download_record = {
-                        "title": title,
-                        "filename": final_filename,
-                        "path": final_path,
-                        "size_mb": round(file_size / (1024 ** 2), 2),
-                        "duration": duration,
-                        "uploader": uploader,
-                        "format": format_type,
-                        "thumbnail": thumbnail,
-                        "downloaded_at": datetime.now().isoformat()
-                    }
-
-                    downloads_history.append(download_record)
-                    save_downloads_history()
-
-                    download_progress = {
-                        "status": "completed",
-                        "percentage": 100,
-                        "title": title
-                    }
-
-                    return jsonify({
-                        "success": True,
-                        "title": title,
-                        "thumbnail": thumbnail,
-                        "duration": duration,
-                        "uploader": uploader,
-                        "format": format_type,
-                        "file_size_mb": round(file_size / (1024 ** 2), 2),
-                        "filename": final_filename,
-                        "local_path": final_path,
-                        "timestamp": datetime.now().isoformat()
-                    })
+        video_id = extract_video_id(url)
+        if video_id:
+            for server in INVIDIOUS_SERVERS:
+                try:
+                    logger.info(f"🔄 Intentando Invidious en {server}...")
+                    invidious_url = get_invidious_url(video_id, server)
                     
-            except Exception as e:
-                error_str = str(e).lower()
-                
-                # Detectar si es error de YouTube específico
-                if 'player' in error_str or 'signature' in error_str or 'age' in error_str:
-                    logger.error(f"❌ Error de YouTube detectado: {str(e)[:100]}")
+                    # Crear configuración para Invidious
+                    invidious_opts = base_ydl_opts.copy()
+                    invidious_opts['extractor_args'] = {}
                     
-                    if attempt < max_attempts:
-                        logger.info(f"⏳ Reintentando con configuración alternativa...")
-                        time.sleep(10)
+                    result = try_download_with_config(invidious_url, invidious_opts, format_type)
+                    
+                    if result:
+                        return result
                         
-                        # Cambiar estrategia en próximo intento
-                        ydl_opts['extractor_args']['youtube']['player_client'] = ['mweb', 'android']
-                        continue
-                    else:
-                        logger.error(f"❌ Falló después de {max_attempts} intentos")
-                        download_progress = {
-                            "status": "error",
-                            "percentage": 0,
-                            "title": "Error de YouTube"
-                        }
-                        return jsonify({
-                            "error": f"YouTube está bloqueando esta descarga. Intenta con otro video o en 5 minutos."
-                        }), 500
-                else:
-                    # Otro tipo de error
-                    logger.error(f"❌ Error: {str(e)}")
-                    download_progress = {
-                        "status": "error",
-                        "percentage": 0,
-                        "title": str(e)
-                    }
-                    return jsonify({
-                        "error": f"Error: {str(e)}"
-                    }), 500
+                except Exception as e:
+                    logger.warning(f"❌ Invidious {server} falló: {str(e)[:50]}")
+                    continue
+
+        # SI TODO FALLA
+        logger.error("❌ No se pudo descargar con YouTube ni Invidious")
+        download_progress = {
+            "status": "error",
+            "percentage": 0,
+            "title": "Error al descargar"
+        }
+        return jsonify({
+            "error": "No se pudo descargar. Intenta en 5 minutos."
+        }), 500
 
     except Exception as e:
         logger.error(f"❌ Error crítico: {str(e)}", exc_info=True)
@@ -418,23 +439,22 @@ def list_files():
 
 if __name__ == '__main__':
     print("╔════════════════════════════════════════════════════════════╗")
-    print("║  🎧 Music Downloader Backend v5.7 - CLOUD                  ║")
-    print("║  ✅ SOLUCIÓN FINAL - Cliente adaptativo                    ║")
-    print("║  ✅ Detección de errores de YouTube                        ║")
-    print("║  ✅ Reintentos con estrategias alternativas                ║")
+    print("║  🎧 Music Downloader Backend v5.8 - CLOUD                  ║")
+    print("║  ✅ SOLUCIÓN FINAL - YouTube + Invidious Fallback          ║")
+    print("║  ✅ Múltiples servidores Invidious gratuitos               ║")
     print("╚════════════════════════════════════════════════════════════╝")
     print()
 
     load_downloads_history()
 
     print(f"📂 Carpeta de descargas: {DOWNLOAD_DIR}")
-    print(f"📂 Carpeta temporal: {TEMP_DIR}")
+    print(f"🎯 Servidores Invidious: {len(INVIDIOUS_SERVERS)}")
     print()
     print("🔗 Servidor en: http://0.0.0.0:5000")
     print()
     print("═" * 62)
     print()
 
-    # Puerto dinámico (para Render/Railway/Replit)
+    # Puerto dinámico
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
